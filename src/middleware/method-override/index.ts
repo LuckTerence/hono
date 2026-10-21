@@ -75,16 +75,27 @@ export const methodOverride = (options: MethodOverrideOptions): MiddlewareHandle
         const form = await clonedRequest.formData()
         const method = form.get(methodFormName)
         if (method) {
-          const newForm = await newRequest.formData()
-          newForm.delete(methodFormName)
+          const methodStr = method as string
+          const upperMethod = methodStr.toUpperCase()
+          const isGetOrHead = upperMethod === 'GET' || upperMethod === 'HEAD'
           const newHeaders = new Headers(clonedRequest.headers)
           newHeaders.delete('content-type')
           newHeaders.delete('content-length')
-          const request = new Request(c.req.url, {
-            body: newForm,
-            headers: newHeaders,
-            method: method as string,
-          })
+          let request: Request
+          if (isGetOrHead) {
+            request = new Request(c.req.url, {
+              headers: newHeaders,
+              method: upperMethod,
+            })
+          } else {
+            const newForm = await newRequest.formData()
+            newForm.delete(methodFormName)
+            request = new Request(c.req.url, {
+              body: newForm,
+              headers: newHeaders,
+              method: methodStr,
+            })
+          }
           return app.fetch(request, c.env, getExecutionCtx(c))
         }
       }
@@ -93,12 +104,26 @@ export const methodOverride = (options: MethodOverrideOptions): MiddlewareHandle
         const params = await parseBody<Record<string, string>>(clonedRequest)
         const method = params[methodFormName]
         if (method) {
-          delete params[methodFormName]
-          const newParams = new URLSearchParams(params)
-          const request = new Request(newRequest, {
-            body: newParams,
-            method: method as string,
-          })
+          const methodStr = method as string
+          const upperMethod = methodStr.toUpperCase()
+          const isGetOrHead = upperMethod === 'GET' || upperMethod === 'HEAD'
+          let request: Request
+          if (isGetOrHead) {
+            const newHeaders = new Headers(clonedRequest.headers)
+            newHeaders.delete('content-type')
+            newHeaders.delete('content-length')
+            request = new Request(c.req.url, {
+              headers: newHeaders,
+              method: upperMethod,
+            })
+          } else {
+            delete params[methodFormName]
+            const newParams = new URLSearchParams(params)
+            request = new Request(newRequest, {
+              body: newParams,
+              method: methodStr,
+            })
+          }
           return app.fetch(request, c.env, getExecutionCtx(c))
         }
       }
@@ -108,12 +133,23 @@ export const methodOverride = (options: MethodOverrideOptions): MiddlewareHandle
       const headerName = options.header
       const method = c.req.header(headerName)
       if (method) {
+        const upperMethod = method.toUpperCase()
+        const isGetOrHead = upperMethod === 'GET' || upperMethod === 'HEAD'
         const newHeaders = new Headers(c.req.raw.headers)
         newHeaders.delete(headerName)
-        const request = new Request(c.req.raw, {
-          headers: newHeaders,
-          method,
-        })
+        if (isGetOrHead) {
+          newHeaders.delete('content-type')
+          newHeaders.delete('content-length')
+        }
+        const request = isGetOrHead
+          ? new Request(c.req.url, {
+              headers: newHeaders,
+              method: upperMethod,
+            })
+          : new Request(c.req.raw, {
+              headers: newHeaders,
+              method,
+            })
         return app.fetch(request, c.env, getExecutionCtx(c))
       }
     }
@@ -122,13 +158,20 @@ export const methodOverride = (options: MethodOverrideOptions): MiddlewareHandle
       const queryName = options.query
       const method = c.req.query(queryName)
       if (method) {
+        const upperMethod = method.toUpperCase()
+        const isGetOrHead = upperMethod === 'GET' || upperMethod === 'HEAD'
         const url = new URL(c.req.url)
         url.searchParams.delete(queryName)
+        const newHeaders = new Headers(c.req.raw.headers)
+        if (isGetOrHead) {
+          newHeaders.delete('content-type')
+          newHeaders.delete('content-length')
+        }
         const requestInit: RequestInit & { duplex?: 'half' } = {
-          body: c.req.raw.body,
-          headers: c.req.raw.headers,
+          body: isGetOrHead ? undefined : c.req.raw.body,
+          headers: newHeaders,
           method,
-          duplex: c.req.raw.body ? 'half' : undefined,
+          duplex: !isGetOrHead && c.req.raw.body ? 'half' : undefined,
         }
         const request = new Request(url.toString(), requestInit)
         return app.fetch(request, c.env, getExecutionCtx(c))
